@@ -1,56 +1,37 @@
-from __future__ import annotations
-
 import os
-from dataclasses import dataclass
 import pandas as pd
-import requests
+from pathlib import Path
 from paper_trading.logging_config import get_system_logger
-from paper_trading.retry_utils import retry_call
 
-@dataclass
-class CloudStateManager:
-    """Manages system state parameters via cloud endpoints instead of local CSV/TXT files."""
-    
-    def __post_init__(self) -> None:
-        self.logger = get_system_logger("paper_trading.cloud_state")
-        self.url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-        self.key = os.getenv("SUPABASE_KEY", "").strip()
-        
-        if not self.url or not self.key:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be configured for Cloud Execution.")
-            
-        self.headers = {
-            "apikey": self.key,
-            "Authorization": f"Bearer {self.key}",
-            "Content-Type": "application/json",
-        }
+PORTFOLIO_COLUMNS = [
+    "symbol", "entry_timestamp", "entry_price", "quantity", 
+    "slot_id", "slot_capital", "pqs", "status", 
+    "bars_since_entry", "pnl_pct", "peak_pnl_so_far", "drawdown_from_peak"
+]
+
+class LocalStateManager:
+    def __init__(self, portfolio_file: str = "current_portfolio.csv"):
+        self.portfolio_file = Path(portfolio_file)
+        self.logger = get_system_logger("paper_trading.state_manager")
+        self._ensure_portfolio_exists()
+
+    def _ensure_portfolio_exists(self):
+        if not self.portfolio_file.exists():
+            df = pd.DataFrame(columns=PORTFOLIO_COLUMNS)
+            df.to_csv(self.portfolio_file, index=False)
+            self.logger.info("Initialized fresh local ledger: %s", self.portfolio_file)
 
     def load_portfolio(self) -> pd.DataFrame:
-        """Fetches active and historical portfolio listings from Supabase tables."""
-        endpoint = f"{self.url}/rest/v1/current_portfolio?select=*"
-        
-        def fetch_op():
-            resp = requests.get(endpoint, headers=self.headers, timeout=15)
-            resp.raise_for_status()
-            return resp.json()
-            
+        """Reads the tracking registry sheet into memory safely."""
         try:
-            data = retry_call(fetch_op, attempts=3)
-            if not data:
-                return pd.DataFrame()
-            return pd.DataFrame(data)
+            return pd.read_csv(self.portfolio_file)
         except Exception as e:
-            self.logger.error("Failed to sync portfolio state from Supabase cluster: %s", e)
-            return pd.DataFrame()
+            self.logger.error("Error loading portfolio file, returning blank layout structure: %s", e)
+            return pd.DataFrame(columns=PORTFOLIO_COLUMNS)
 
-    def save_portfolio_row(self, row_dict: dict) -> None:
-        """Upserts a modified position tracking row back into cloud tables based on symbol key."""
-        endpoint = f"{self.url}/rest/v1/current_portfolio"
-        headers = {**self.headers, "Prefer": "resolution=merge-duplicates"}
-        
-        def upsert_op():
-            resp = requests.post(endpoint, headers=headers, json=row_dict, timeout=15)
-            resp.raise_for_status()
-            
-        retry_call(upsert_op, attempts=3)
-        self.logger.info("Successfully updated cloud database matrix entry for %s", row_dict.get("symbol"))
+    def save_portfolio(self, df: pd.DataFrame):
+        """Atomically saves tracking frames over the active ledger spreadsheet."""
+        temp_file = self.portfolio_file.with_suffix(".tmp")
+        df.to_csv(temp_file, index=False)
+        os.replace(temp_file, self.portfolio_file)
+        self.logger.info("Local position ledger state synced smoothly.")
