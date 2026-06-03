@@ -1,7 +1,7 @@
 import argparse
 import time
 import pandas as pd
-from paper_trading.state_manager import LocalStateManager, PORTFOLIO_COLUMNS
+from paper_trading.state_manager import CloudStateManager, PORTFOLIO_COLUMNS
 from paper_trading.live_candidate_engine import LiveCandidateEngine
 from paper_trading.rl_exit_engine import RLExitEngine
 from paper_trading.logging_config import get_system_logger
@@ -14,7 +14,7 @@ def main():
     logger = get_system_logger("paper_trading.orchestrator")
     logger.info("Initializing trading matrix tick execution sequence for slot=%s", args.slot)
 
-    state_mgr = LocalStateManager()
+    state_mgr =CloudStateManager()
     portfolio_df = state_mgr.load_portfolio()
 
     # Split open records from historic archive blocks
