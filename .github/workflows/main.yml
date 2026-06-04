@@ -1,14 +1,14 @@
-name: Deploy React Dashboard to GitHub Pages
+name: Deploy React Dashboard
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'dashboard/**'
+    branches: [main]
+    paths: ["dashboard/**"]
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build-and-deploy:
@@ -16,6 +16,10 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          # This gives the checkout step explicit permission to pull the private/public repo blocks cleanly
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,3 +46,5 @@ jobs:
         with:
           folder: dashboard/dist
           branch: gh-pages
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
