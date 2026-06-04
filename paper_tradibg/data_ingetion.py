@@ -15,91 +15,73 @@ class LiveDataIngestor:
         self.output_dir = Path(output_dir)
         self.logger = get_system_logger("paper_trading.data_ingestion")
         
-        # Load credentials from environmental secrets
         self.api_key = os.getenv("ANGEL_API_KEY", "MOCK_API_KEY")
         self.client_id = os.getenv("ANGEL_CLIENT_ID", "")
         self.password = os.getenv("ANGEL_PASSWORD", "")
-        self.totp_secret = os.getenv("ANGEL_TOTP_SECRET", "") # The alphanumeric key given by Angel One when setting up TOTP
+        self.totp_secret = os.getenv("ANGEL_TOTP_SECRET", "")
+        
+        # Enforce strict maximum tracking depth for FIFO
+        self.max_history_window = 60 
 
     def generate_jwt_session(self) -> str:
-        """Dynamically generates a fresh session JWT token using TOTP keys."""
+        """Dynamically generates a fresh session token using TOTP verification."""
         if self.api_key == "MOCK_API_KEY" or not self.totp_secret:
-            self.logger.warning("Using mock environment profile credentials for execution framework.")
             return "MOCK_JWT"
 
         endpoint = "https://apicompania.angelone.in/smartapi/admin/user/v1/loginByPassword"
-        
-        # Generate the 6-digit dynamic TOTP pin programmatically right now
         totp = pyotp.TOTP(self.totp_secret.strip().replace(" ", ""))
-        current_totp_pin = totp.now()
-
+        
         payload = {
             "clientcode": self.client_id,
             "password": self.password,
-            "totp": current_totp_pin
+            "totp": totp.now()
         }
-        
-        headers = {
-            "Content-Type": "application/json",
-            "X-PrivateKey": self.api_key
-        }
+        headers = {"Content-Type": "application/json", "X-PrivateKey": self.api_key}
 
         try:
             response = requests.post(endpoint, json=payload, headers=headers, timeout=10)
-            response_data = response.json()
-            
-            if response_data.get("status") is True:
-                jwt_token = response_data["data"]["jwtToken"]
-                self.logger.info("Angel One authentication session successfully established.")
-                return jwt_token
+            res_json = response.json()
+            if res_json.get("status") is True:
+                return res_json["data"]["jwtToken"]
             else:
-                raise ValueError(f"Broker login rejected: {response_data.get('message')}")
+                raise ValueError(f"Login Rejected: {res_json.get('message')}")
         except Exception as e:
-            self.logger.error("Failed to generate dynamic login session: %s", e)
+            self.logger.error("Session authorization crash: %s", e)
             raise e
 
     def load_universe(self) -> list[str]:
-        """Reads your tracking text file from the configs directory."""
         if not self.universe_file.exists():
             return []
         with open(self.universe_file, "r") as f:
             return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
-    def fetch_ohlc_from_broker(self, symbol: str, jwt_token: str) -> pd.DataFrame:
-        """Connects to the broker endpoint to pull down historical candles."""
+    def fetch_candles(self, symbol: str, jwt_token: str, fetch_count: int) -> pd.DataFrame:
+        """Fetches a specific number of candles (60 for initial boot, 1 for live adjustments)."""
         if jwt_token == "MOCK_JWT":
-            # Generate simulated calculation rows if no API credentials exist
-            intervals = 50
-            times = pd.date_range(end=pd.Timestamp.utcnow(), periods=intervals, freq='2h')
-            close_prices = 500 + np.cumsum(np.random.normal(0.5, 3.0, size=intervals))
-            
+            # Simulation Generator: Outputs exactly the requested size
+            times = pd.date_range(end=pd.Timestamp.utcnow(), periods=fetch_count, freq='2h')
+            close_prices = 500 + np.cumsum(np.random.normal(0.2, 2.0, size=fetch_count))
             return pd.DataFrame({
                 "timestamp": times,
-                "open": close_prices - np.random.normal(0.0, 1.0, size=intervals),
-                "high": close_prices + np.random.uniform(0.1, 5.0, size=intervals),
-                "low": close_prices - np.random.uniform(0.1, 5.0, size=intervals),
+                "open": close_prices - np.random.normal(0.0, 1.0, size=fetch_count),
+                "high": close_prices + np.random.uniform(0.1, 4.0, size=fetch_count),
+                "low": close_prices - np.random.uniform(0.1, 4.0, size=fetch_count),
                 "close": close_prices,
-                "volume": np.random.randint(10000, 500000, size=intervals)
+                "volume": np.random.randint(5000, 200000, size=fetch_count)
             })
-            
         else:
-            # Actual data fetch from smartapi
+            # SmartAPI connection endpoint mapping logic using fetch_count configuration parameters
             endpoint = "https://apicompania.angelone.in/ms/v1/historicalData"
-            headers = {
-                "Authorization": f"Bearer {jwt_token}",
-                "Content-Type": "application/json",
-                "X-PrivateKey": self.api_key
-            }
-            # Custom request payload dictionary matching symbol configuration mappings
+            # Actual live HTTP requests payloads go here...
             return pd.DataFrame()
 
     def compute_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Transforms raw candles into your exact mathematical indicator metrics."""
-        if df.empty or len(df) < 10:
+        """Computes technical spreads over the standardized rolling dataframe."""
+        if df.empty or len(df) < 25:  # Ensure basic sizing thresholds to avoid NaN calculations
             return df
-        work = df.copy()
+            
+        work = df.copy().reset_index(drop=True)
         
-        # Base indicators
         ema_short = work["close"].ewm(span=9, adjust=False).mean()
         ema_long = work["close"].ewm(span=21, adjust=False).mean()
         work["ema_spread"] = ema_short - ema_long
@@ -127,36 +109,59 @@ class LiveDataIngestor:
         return work
 
     def run_pipeline(self):
-        """Orchestrates authorization and pulls data for your asset sheets."""
+        """Processes rolling FIFO buffers seamlessly for the ticker array lists."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
         symbols = self.load_universe()
         
         try:
-            # Generate your live dynamic login session using TOTP
             jwt_token = self.generate_jwt_session()
         except Exception:
-            self.logger.error("Authentication failed. Aborting ingestion loop.")
+            self.logger.error("Authorization dropped. Ingestion loop killed.")
             return
 
-        self.logger.info("Starting ingestion processing for %d symbols across universe matrix...", len(symbols))
+        self.logger.info("Syncing FIFO data layers across %d asset arrays...", len(symbols))
         success_count = 0
         
         for sym in symbols:
             try:
-                def process_operation():
-                    raw_df = self.fetch_ohlc_from_broker(sym, jwt_token)
-                    if raw_df.empty:
-                        return False
-                    processed_df = self.compute_technical_indicators(raw_df)
-                    processed_df.to_parquet(self.output_dir / f"{sym}.parquet", index=False)
-                    return True
+                parquet_target = self.output_dir / f"{sym}.parquet"
                 
-                if retry_call(process_operation, attempts=2):
-                    success_count += 1
+                # Check if file exists to distinguish between Cold Start and Live Run
+                if parquet_target.exists():
+                    # --- LIVE RUN: ROLLING FIFO STEP ---
+                    existing_df = pd.read_parquet(parquet_target)
+                    
+                    # Fetch just 1 single fresh candle
+                    new_candle_df = self.fetch_candles(sym, jwt_token, fetch_count=1)
+                    
+                    if new_candle_df.empty:
+                        continue
+                        
+                    # Drop computed feature columns from history before appending raw data
+                    raw_columns = ["timestamp", "open", "high", "low", "close", "volume"]
+                    cleaned_hist = existing_df[raw_columns]
+                    
+                    # FIFO Queue Merge: Append latest, slice tail to protect memory limits
+                    merged_raw_df = pd.concat([cleaned_hist, new_candle_df], ignore_index=True)
+                    final_raw_df = merged_raw_df.tail(self.max_history_window)
+                    
+                else:
+                    # --- COLD START: SEED THE WINDOW ---
+                    self.logger.info("Cold Start tracking triggered for asset %s. Seeding 60 rows.", sym)
+                    final_raw_df = self.fetch_candles(sym, jwt_token, fetch_count=self.max_history_window)
+
+                if final_raw_df.empty:
+                    continue
+
+                # Recalculate indicators across the strict rolling array windows
+                processed_df = self.compute_technical_indicators(final_raw_df)
+                processed_df.to_parquet(parquet_target, index=False)
+                success_count += 1
+                
             except Exception as e:
-                self.logger.warning("Failed factor parsing updates for symbol %s: %s", sym, e)
+                self.logger.warning("Failed processing updates for ticker %s: %s", sym, e)
                 
-        self.logger.info("Ingestion complete. Updated %d/%d data frames.", success_count, len(symbols))
+        self.logger.info("FIFO Sync sequence finalized. Maintained %d execution matrix logs.", success_count)
 
 if __name__ == "__main__":
     ingestor = LiveDataIngestor()
