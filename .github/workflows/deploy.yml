@@ -2,9 +2,10 @@ name: Deploy React Dashboard to GitHub Pages
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
     paths:
-      - 'dashboard/**' # Only trigger when code inside the dashboard folder changes
+      - 'dashboard/**'
 
 permissions:
   contents: write
@@ -33,12 +34,11 @@ jobs:
           cd dashboard
           npm run build
         env:
-          # Injecting your public Supabase tokens during the build compilation process
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
-          folder: dashboard/dist # Points to the compiled folder Vite generates
-          branch: gh-pages # The isolated deployment branch GitHub serves from
+          folder: dashboard/dist
+          branch: gh-pages
