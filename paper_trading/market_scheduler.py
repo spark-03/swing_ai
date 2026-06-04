@@ -2,26 +2,46 @@ import os
 import sys
 import time
 import subprocess
+import threading
 from datetime import datetime
 import zoneinfo
+from http.server import SimpleHTTPRequestHandler, HTTPServer
 from paper_trading.logging_config import get_system_logger
 
+# --- Tiny Background Web Server to stop Render Port Scanning Alerts ---
+class HealthCheckHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Spark Engine Core Scheduler is online and active.")
+
+def run_health_server(logger):
+    try:
+        port = int(os.environ.get("PORT", 10000)) 
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info("Internal Render health ping server started on port %s", port)
+        server.serve_forever()
+    except Exception as e:
+        logger.error("Failed to start health ping web server: %s", e)
+
+# --- Core Trading Pipeline Executor ---
 def run_trading_pipeline(slot_name: str):
     """Executes the ingestion step followed by the live portfolio tracker step."""
     logger = get_system_logger("market_scheduler.pipeline")
-    logger.info(True, "=== ALERT: Starting scheduled execution cycle for slot [%s] ===", slot_name)
+    logger.info("=== ALERT: Starting scheduled execution cycle for slot [%s] ===", slot_name)
     
     # 1. Step One: Trigger Data Ingestion to fetch fresh broker candles
-    logger.info(True, "Executing data ingestion routines...")
+    logger.info("Executing data ingestion routines...")
     ingest_proc = subprocess.run([sys.executable, "-m", "paper_trading.data_ingestion"], capture_output=True, text=True)
     
     if ingest_proc.returncode != 0:
         logger.error("Data Ingestion crashed! Skipping execution portfolio logic. Error:\n%s", ingest_proc.stderr)
         return
-    logger.info(True, "Data Ingestion completed successfully.")
+    logger.info("Data Ingestion completed successfully.")
 
     # 2. Step Two: Trigger Portfolio Core Engine to process DQN Exits & PQS Entries
-    logger.info(True, "Executing portfolio matrix engine allocation processes...")
+    logger.info("Executing portfolio matrix engine allocation processes...")
     portfolio_proc = subprocess.run([
         sys.executable, "-m", "paper_trading.run_live_portfolio", "--slot", slot_name
     ], capture_output=True, text=True)
@@ -30,11 +50,15 @@ def run_trading_pipeline(slot_name: str):
         logger.error("Portfolio Engine crashed! Error Log output:\n%s", portfolio_proc.stderr)
         return
     
-    logger.info(True, "=== SUCCESS: Scheduled pipeline loop finalized for slot [%s] ===", slot_name)
+    logger.info("=== SUCCESS: Scheduled pipeline loop finalized for slot [%s] ===", slot_name)
 
 def main():
     logger = get_system_logger("market_scheduler.main")
     logger.info("Spark-03 Background Daemon Cloud Scheduler initialized and running.")
+    
+    # Fire up the health server on a background thread to silence Render warnings
+    server_thread = threading.Thread(target=run_health_server, args=(logger,), daemon=True)
+    server_thread.start()
     
     # Enforce Indian Standard Time handling matching exchange clocks
     ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
@@ -89,7 +113,7 @@ def main():
                 time.sleep(600) # Check every 10 minutes at night to conserve compute assets
 
         except KeyboardInterrupt:
-            logger.info(True, "Scheduler daemon manually shutdown by termination signal request.")
+            logger.info("Scheduler daemon manually shutdown by termination signal request.")
             break
         except Exception as e:
             logger.error("Unexpected failure across main scheduler daemon framework loop: %s", e)
