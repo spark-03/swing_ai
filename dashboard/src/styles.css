@@ -1,0 +1,38 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-graphite: 22, 31, 40;   /* #161F28 */
+    --color-mint: 103, 232, 165;   /* #67E8A5 */
+    --color-brass: 210, 162, 76;   /* #D2A24C */
+    --color-danger: 255, 107, 107; /* #FF6B6B */
+  }
+
+  body {
+    @apply bg-[#070A0E] text-slate-100 font-sans antialiased;
+  }
+  
+  /* High-fidelity custom scrollbar mechanics */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(210, 162, 76, 0.3);
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+}
