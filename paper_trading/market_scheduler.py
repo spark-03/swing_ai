@@ -34,7 +34,7 @@ def run_trading_pipeline(slot_name: str):
 
 def main():
     logger = get_system_logger("market_scheduler.main")
-    logger.info(True, "Spark-03 Background Daemon Cloud Scheduler initialized and running.")
+    logger.info("Spark-03 Background Daemon Cloud Scheduler initialized and running.")
     
     # Enforce Indian Standard Time handling matching exchange clocks
     ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
@@ -62,7 +62,7 @@ def main():
             if current_day != last_day:
                 triggered_today.clear()
                 last_day = current_day
-                logger.info(True, "New market day registered: %s. Trigger matrix reset clean.", now_ist.strftime('%Y-%m-%d'))
+                logger.info("New market day registered: %s. Trigger matrix reset clean.", now_ist.strftime('%Y-%m-%d'))
 
             # Skip tracking algorithms on weekends entirely
             if weekday >= 5:
