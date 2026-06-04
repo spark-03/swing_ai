@@ -1,11 +1,9 @@
-name: Deploy React Dashboard to GitHub Pages
+name: Deploy React Dashboard
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'dashboard/**'
+    branches: [main]
+    paths: ["dashboard/**"]
 
 permissions:
   contents: write
