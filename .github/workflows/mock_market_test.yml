@@ -54,7 +54,9 @@ jobs:
         
         # Sort by highest ranking
         mock_rankings = sorted(mock_rankings, key=lambda x: x["pqs_score"], reverse=True)
-        print(f"🏆 Top Mock Ranked Asset: {mock_rankings[0][\"ticker\"]} with Score: {mock_rankings[0][\"pqs_score\"]}")
+        top_ticker = mock_rankings[0]["ticker"]
+        top_score = mock_rankings[0]["pqs_score"]
+        print(f"🏆 Top Mock Ranked Asset: {top_ticker} with Score: {top_score}")
 
         # 3. Simulate RL Model Decision
         print("\n🧠 STEP 3: Evaluating top assets via Reinforcement Learning agent...")
@@ -73,7 +75,8 @@ jobs:
             "remaining_balance": 100000 - (shares * mock_entry_price),
             "status": "MOCK_PAPER_TRADE"
         }
-        print(f"🎯 RL Agent Decision: {mock_trade_payload[\"action\"]} {shares} shares of {best_stock} at ₹{mock_entry_price}")
+        action = mock_trade_payload["action"]
+        print(f"🎯 RL Agent Decision: {action} {shares} shares of {best_stock} at ₹{mock_entry_price}")
 
         # 4. Push Results to Supabase
         print("\n⚡ STEP 4: Connecting to Supabase to verify dashboard syncing...")
