@@ -1,5 +1,5 @@
 # Model files (too large to commit)
-models/**
+models/
 
 # Dependencies
 node_modules/
@@ -27,4 +27,7 @@ dashboard/dist/
 
 # OS
 .DS_Store
-Thumbs.db
+Thumb.db
+
+# Git LFS
+.git/lfs/
