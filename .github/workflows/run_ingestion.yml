@@ -28,7 +28,8 @@ jobs:
       run: |
         python -m paper_trading.data_ingestion
       env:
-        ANGEL_API_KEY: "MOCK_API_KEY" # Keeps it in high-fidelity simulation mode to seed files
+        ANGEL_API_KEY: "MOCK_API_KEY" 
+# Keeps it in high-fidelity simulation mode to seed files
 
     - name: Commit and Push Parquet Candle Data
       run: |
