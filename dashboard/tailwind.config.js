@@ -2,24 +2,19 @@
 export default {
   content: [
     "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
+    "./src/**/*.{js,jsx,ts,tsx}",
   ],
   theme: {
     extend: {
       colors: {
-        graphite: 'rgb(var(--color-graphite) / <alpha-value>)',
-        mint: 'rgb(var(--color-mint) / <alpha-value>)',
-        brass: 'rgb(var(--color-brass) / <alpha-value>)',
-        danger: 'rgb(var(--color-danger) / <alpha-value>)',
+        slate: {
+          100: '#f1f5f9',
+          400: '#cbd5e1',
+          500: '#64748b',
+          800: '#1e293b',
+        },
       },
-      fontFamily: {
-        sans: ['"IBM Plex Sans"', 'sans-serif'],
-        display: ['"Space Grotesk"', 'sans-serif'],
-      },
-      boxShadow: {
-        glass: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
-      }
     },
   },
   plugins: [],
-}
+};
