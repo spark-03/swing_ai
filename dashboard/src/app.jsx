@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import {
   TrendingUp, ShieldAlert, Layers, RefreshCw, AlertTriangle,
-  ArrowUpRight, ArrowDownRight, Clock, DollarSign, BarChart3
+  ArrowUpRight, ArrowDownRight, Clock, DollarSign, BarChart3, HelpCircle
 } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
@@ -34,6 +34,7 @@ export default function App() {
   const [positions, setPositions] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [pqsRankings, setPqsRankings] = useState({});
+  const [marketStatus, setMarketStatus] = useState("UNKNOWN"); // NEW: Local state tracker for exchange clock
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -72,6 +73,17 @@ export default function App() {
         .limit(100);
 
       if (rankError) throw rankError;
+
+      // 4. NEW: Fetch dynamic market holiday state flag from cloud scheduler matrix
+      const { data: stateData, error: stateError } = await supabase
+        .from('system_state')
+        .select('value')
+        .eq('key', 'market_status')
+        .maybeSingle();
+
+      if (!stateError && stateData) {
+        setMarketStatus(stateData.value);
+      }
 
       // Index rankings by symbol for quick lookup
       const rankingsMap = {};
@@ -160,13 +172,31 @@ export default function App() {
             {' | '}Holdings: {positions.length} / 3
           </p>
         </div>
-        <button onClick={syncLiveCloudData} style={{
-          background: '#1e293b', border: '1px solid #475569', color: '#fff',
-          padding: '10px 20px', borderRadius: '6px', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500',
-        }}>
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Refresh
-        </button>
+
+        {/* Dynamic Interactive Market Engine Guard Badging Panel */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{
+            padding: '8px 16px',
+            borderRadius: '8px',
+            fontSize: '14px',
+            fontWeight: '600',
+            background: marketStatus === "OPEN" ? '#064e3b' : marketStatus === "CLOSED" ? '#4c0519' : '#1e293b',
+            border: `1px solid ${marketStatus === "OPEN" ? '#059669' : marketStatus === "CLOSED" ? '#e11d48' : '#475569'}`,
+            color: marketStatus === "OPEN" ? '#34d399' : marketStatus === "CLOSED" ? '#fda4af' : '#94a3b8',
+          }}>
+            {marketStatus === "OPEN" && "🟢 NSE MARKET: ACTIVE"}
+            {marketStatus === "CLOSED" && "🔴 NSE MARKET: HOLIDAY (IDLE)"}
+            {marketStatus === "UNKNOWN" && "⚪ MARKET PULSE: OFFLINE"}
+          </div>
+
+          <button onClick={syncLiveCloudData} style={{
+            background: '#1e293b', border: '1px solid #475569', color: '#fff',
+            padding: '10px 20px', borderRadius: '6px', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '500',
+          }}>
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+        </div>
       </header>
 
       {errorMsg && (
@@ -233,7 +263,7 @@ export default function App() {
         background: '#1e293b', borderRadius: '12px', border: '1px solid #334155',
         padding: '24px', overflowX: 'auto',
       }}>
-        <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#94a3b8', fontSize: '18px' }}>
+        <h3 style={{ marginTop: 0, margin: '0 0 20px 0', color: '#94a3b8', fontSize: '18px' }}>
           Live Open Positions
         </h3>
 
