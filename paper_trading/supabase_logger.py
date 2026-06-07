@@ -5,8 +5,6 @@ from typing import Any
 import requests
 
 import os
-from dotenv import load_dotenv
-load_dotenv()
 
 from paper_trading.logging_config import get_system_logger
 from paper_trading.retry_utils import retry_call

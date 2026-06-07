@@ -5,7 +5,7 @@ from paper_trading.pqs_engine import calculate_pqs
 from paper_trading.logging_config import get_system_logger
 
 class LiveCandidateEngine:
-    def __init__(self, universe_file: str = "configs/nifty500_symbols.txt", data_dir: str = "data/live/2h"):
+    def __init__(self, universe_file: str = "configs/nifty500_symbols.txt", data_dir: str = "data/2h"):
         self.universe_file = Path(universe_file)
         self.data_dir = Path(data_dir)
         self.logger = get_system_logger("paper_trading.candidate_engine")
