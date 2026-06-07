@@ -1,0 +1,47 @@
+services:
+  # Backend Python Trading Bot Service
+  - type: web
+    name: swing-ai-trading-bot
+    runtime: python
+    pythonVersion: "3.11"
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: python -m paper_trading.run_live_portfolio
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: ANGEL_API_KEY
+        sync: false
+      - key: ANGEL_CLIENT_ID
+        sync: false
+      - key: ANGEL_PASSWORD
+        sync: false
+      - key: ANGEL_TOTP_SECRET
+        sync: false
+      - key: PYTHONPATH
+        value: "."
+    healthCheckPath: /health
+    autoDeploy: true
+
+  # Dashboard Frontend (Static Site on Netlify - configured separately)
+  # This service is for reference - actual deployment is via Netlify
+  - type: web
+    name: swing-ai-dashboard
+    runtime: static
+    buildCommand: |
+      cd dashboard
+      npm install
+      npm run build
+    staticPublishPath: dashboard/dist
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
