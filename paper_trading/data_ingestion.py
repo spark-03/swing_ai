@@ -102,14 +102,7 @@ class LiveDataIngestor:
                 "volume": np.random.randint(10000, 500000, size=fetch_count)
             })
         else:
-            # SmartAPI active routing parameters
-            endpoint = "https://apicompania.angelone.in/ms/v1/historicalData"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {jwt_token}",
-                "X-PrivateKey": self.api_key
-            }
-            # Add live API parsing payload here when ready for live credentials...
+            # SmartAPI active routing parameters placeholder (cleaned unused vars)
             return pd.DataFrame()
 
     def compute_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -205,7 +198,7 @@ class LiveDataIngestor:
                 success_count += 1
 
             except Exception as e:
-                self.warning(f"Failed processing execution buffers for asset {sym}: {e}")
+                self.logger.warning(f"Failed processing execution buffers for asset {sym}: {e}")
 
         self.logger.info(f"=== FIFO UPDATE MATRIX SUCCESSFUL: Maintained {success_count}/{len(symbols)} stock logs ===")
 
