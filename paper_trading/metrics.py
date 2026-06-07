@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,15 @@ from typing import Any
 import pandas as pd
 
 from paper_trading.retry_utils import retry_call
+
+# Safe initialization block for Supabase Python SDK client module
+try:
+    from supabase import create_client, Client
+    SUPABASE_URL = os.environ.get("VITE_SUPABASE_URL", "")
+    SUPABASE_KEY = os.environ.get("VITE_SUPABASE_ANON_KEY", "")
+    supabase_client: Client | None = create_client(SUPABASE_URL, SUPABASE_KEY) if (SUPABASE_URL and SUPABASE_KEY) else None
+except ImportError:
+    supabase_client = None
 
 
 METRICS_FILE = Path("logs/dashboard_metrics.json")
@@ -42,12 +52,40 @@ def load_metrics(path: Path = METRICS_FILE) -> dict[str, Any]:
 
 
 def save_metrics(metrics: dict[str, Any], path: Path = METRICS_FILE) -> None:
+    # 1. Local Fallback Backup Strategy (Atomic write logic)
     def write_once() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_name(f".{path.name}.tmp")
         tmp_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         tmp_path.replace(path)
-    retry_call(write_once, attempts=3, retry_exceptions=(OSError,))
+    
+    try:
+        retry_call(write_once, attempts=3, retry_exceptions=(OSError,))
+    except Exception as e:
+        print(f"Local metrics file-write failed: {e}")
+
+    # 2. Synchronous Push to Supabase Cloud Instance (Overwriting record row id: 1)
+    if supabase_client:
+        try:
+            payload = {
+                "id": 1,  # Matches INT PRIMARY KEY layout safely
+                "cycle_count": int(metrics.get("cycle_count", 0)),
+                "trades_executed": int(metrics.get("trades_executed", 0)),
+                "exits_triggered": int(metrics.get("exits_triggered", 0)),
+                "rotations_triggered": int(metrics.get("rotations_triggered", 0)),
+                "active_positions": int(metrics.get("active_positions", 0)),
+                "portfolio_value": float(metrics.get("portfolio_value", 1000000.0)),
+                "last_cycle_started_at": metrics.get("last_cycle_started_at"),
+                "last_cycle_completed_at": metrics.get("last_cycle_completed_at"),
+                "last_cycle_duration_seconds": metrics.get("last_cycle_duration_seconds"),
+                "last_processed_slot": metrics.get("last_processed_slot"),
+                "last_error": metrics.get("last_error"),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            supabase_client.table("dashboard_metrics").upsert(payload).execute()
+        except Exception as err:
+            print(f"Supabase metrics table synchronizer loop encountered an intercept failure: {err}")
 
 
 def utc_now_iso() -> str:
