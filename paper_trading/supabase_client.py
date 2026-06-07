@@ -36,7 +36,7 @@ class SupabaseClient:
         if self._client is None:
             if not self.url or not self.key:
                 raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set")
-            self._client = create_client(self.url, key=self.key)
+            self._client = create_client(self.url, self.key)
         return self._client
 
     def _retry_with_backoff(self, func, *args, **kwargs):
