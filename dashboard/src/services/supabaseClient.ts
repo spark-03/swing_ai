@@ -27,6 +27,9 @@ export const supabase = isSupabaseConfigured
     })
   : null;
 
+/**
+ * Validates the core heartbeat connectivity to the Supabase backend.
+ */
 export async function testSupabaseConnection(): Promise<{ success: boolean; error?: string }> {
   if (!supabase) {
     return { success: false, error: "Supabase not configured" };
@@ -38,5 +41,29 @@ export async function testSupabaseConnection(): Promise<{ success: boolean; erro
     return { success: true };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
+
+/**
+ * NEW: Dynamic fetch utility to grab the live market state tracker token
+ * for rendering active session states directly inside dashboard components.
+ */
+export async function getMarketStatus(): Promise<string> {
+  if (!supabase) {
+    return "DISCONNECTED";
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("system_state")
+      .select("value")
+      .eq("key", "market_status")
+      .maybeSingle(); // Safely handles empty tables without throwing unhandled exceptions
+
+    if (error) throw error;
+    return data ? (data.value as string) : "UNKNOWN";
+  } catch (err) {
+    console.error("Failed to extract active market tracking vectors:", err);
+    return "UNKNOWN";
   }
 }
