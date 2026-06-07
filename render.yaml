@@ -7,7 +7,7 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-    startCommand: python -m paper_trading.run_live_portfolio
+    startCommand: python -m paper_trading.market_scheduler
     envVars:
       - key: SUPABASE_URL
         sync: false
@@ -33,7 +33,7 @@ services:
     runtime: static
     buildCommand: |
       cd dashboard
-      npm install
+      npm ci
       npm run build
     staticPublishPath: dashboard/dist
     envVars:

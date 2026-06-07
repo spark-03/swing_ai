@@ -7,7 +7,8 @@ def retry_call(
     operation: Callable[[], T],
     attempts: int = 3,
     initial_delay: float = 0.5,
-    backoff: float = 2.0
+    backoff: float = 2.0,
+    retry_exceptions: tuple[type[BaseException], ...] = (Exception,),
 ) -> T:
     """Executes a function block with bounded exponential recovery delays."""
     delay = initial_delay
@@ -16,7 +17,7 @@ def retry_call(
     for attempt in range(1, attempts + 1):
         try:
             return operation()
-        except Exception as exc:
+        except retry_exceptions as exc:
             last_error = exc
             if attempt == attempts:
                 break

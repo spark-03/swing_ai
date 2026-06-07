@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import argparse
 import subprocess
 import threading
 from datetime import datetime
@@ -64,8 +65,23 @@ def run_trading_pipeline(slot_name: str):
     logger.info("=== SUCCESS: Scheduled pipeline loop finalized for slot [%s] ===", slot_name)
 
 def main():
+    parser = argparse.ArgumentParser(description="Spark-03 market scheduler.")
+    parser.add_argument("--once", action="store_true", help="Run one pipeline cycle and exit.")
+    parser.add_argument(
+        "--allow-late-minutes",
+        type=int,
+        default=10,
+        help="Accepted for GitHub Actions compatibility.",
+    )
+    args = parser.parse_args()
+
     logger = get_system_logger("market_scheduler.main")
     logger.info("Spark-03 Background Daemon Cloud Scheduler initialized and running.")
+
+    if args.once:
+        timestamp_str = datetime.now(zoneinfo.ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d_%H:%M")
+        run_trading_pipeline(slot_name=f"MANUAL_ONCE_{timestamp_str}")
+        return
     
     # Fire up the health server on a background thread to silence Render warnings
     server_thread = threading.Thread(target=run_health_server, args=(logger,), daemon=True)

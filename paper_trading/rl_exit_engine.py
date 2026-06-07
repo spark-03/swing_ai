@@ -17,7 +17,7 @@ RL_OBSERVATION_FEATURES = [
 @dataclass
 class RLExitConfig:
     model_path: Path = Path("models/rl_trade_exit_agent_tqs25.zip")
-    hourly_data_dir: Path = Path("data/live/2h")
+    hourly_data_dir: Path = Path("data/2h")
 
 class RLExitEngine:
     def __init__(self, config: RLExitConfig | None = None) -> None:

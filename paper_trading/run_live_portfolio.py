@@ -14,10 +14,27 @@ from paper_trading.logging_config import get_system_logger
 from paper_trading.metrics import record_cycle_error, record_cycle_start, update_cycle_metrics
 from paper_trading.portfolio_engine import PortfolioEngine
 from paper_trading.retry_utils import retry_call
-from paper_trading.rl_exit_engine import RLExitEngine
 from paper_trading.rotation_engine import RotationEngine
 from paper_trading.state_manager import PORTFOLIO_COLUMNS, StateManager
 from paper_trading.supabase_logger import SupabaseLogger
+
+try:
+    from paper_trading.rl_exit_engine import RLExitEngine
+except Exception:  # pragma: no cover - protects cloud startup if torch is unavailable
+    class RLExitEngine:  # type: ignore[no-redef]
+        def evaluate_positions(self, open_positions: pd.DataFrame) -> pd.DataFrame:
+            return pd.DataFrame(
+                [
+                    {
+                        "timestamp": pd.Timestamp.now("UTC"),
+                        "symbol": str(row["symbol"]),
+                        "decision": "HOLD",
+                        "reason": "rl_dependency_unavailable",
+                    }
+                    for _, row in open_positions.iterrows()
+                ],
+                columns=["timestamp", "symbol", "decision", "reason"],
+            )
 
 
 def apply_rl_exits(portfolio_df: pd.DataFrame, decisions_df: pd.DataFrame) -> pd.DataFrame:
