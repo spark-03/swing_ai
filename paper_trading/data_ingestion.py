@@ -1,14 +1,15 @@
 import os
-import sys
-import time
-import pandas as pd
-import numpy as np
-import requests
-import pyotp
+from datetime import datetime, timedelta
 from pathlib import Path
 import zoneinfo
-from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+import pyotp
+import requests
+
 from paper_trading.logging_config import get_system_logger
+
 
 class LiveDataIngestor:
     def __init__(self, universe_csv: str = "ind_nifty500list.csv", output_dir: str = "data/2h"):
@@ -16,17 +17,17 @@ class LiveDataIngestor:
         self.base_dir = Path(__file__).resolve().parent.parent
         self.universe_file = self.base_dir / universe_csv
         self.output_dir = self.base_dir / output_dir
-        
+
         self.logger = get_system_logger("paper_trading.data_ingestion")
-        
+
         # SmartAPI Credentials pulled directly from your cloud Environment variables
         self.api_key = os.getenv("ANGEL_API_KEY", "MOCK_API_KEY")
         self.client_id = os.getenv("ANGEL_CLIENT_ID", "")
         self.password = os.getenv("ANGEL_PASSWORD", "")
         self.totp_secret = os.getenv("ANGEL_TOTP_SECRET", "")
-        
+
         # Enforce strict maximum tracking depth for FIFO memory buffers
-        self.max_history_window = 60 
+        self.max_history_window = 60
 
     def generate_jwt_session(self) -> str:
         """Dynamically generates a fresh session token using TOTP authentication."""
@@ -36,7 +37,7 @@ class LiveDataIngestor:
 
         endpoint = "https://apicompania.angelone.in/smartapi/admin/user/v1/loginByPassword"
         totp = pyotp.TOTP(self.totp_secret.strip().replace(" ", ""))
-        
+
         payload = {
             "clientcode": self.client_id,
             "password": self.password,
@@ -60,7 +61,7 @@ class LiveDataIngestor:
         if not self.universe_file.exists():
             self.logger.error(f"Critical Error: Universe mapping file missing at {self.universe_file}")
             return []
-        
+
         try:
             df = pd.read_csv(self.universe_file)
             if 'Symbol' in df.columns:
@@ -82,15 +83,15 @@ class LiveDataIngestor:
             now = datetime.now(ist_zone)
             timestamps = []
             current_time = now
-            
+
             while len(timestamps) < fetch_count:
                 if 9 <= current_time.hour <= 15:
                     if current_time.weekday() < 5:  # Monday to Friday
                         timestamps.append(current_time.strftime("%Y-%m-%d %H:%M:%S"))
                 current_time -= timedelta(hours=2)
-                
+
             timestamps.reverse()
-            
+
             close_prices = 1200.0 + np.cumsum(np.random.normal(0.1, 4.0, size=fetch_count))
             return pd.DataFrame({
                 "timestamp": timestamps,
@@ -115,32 +116,32 @@ class LiveDataIngestor:
         """Computes technical indicator fields over the rolling data frames."""
         if df.empty or len(df) < 25:
             return df
-            
+
         work = df.copy().reset_index(drop=True)
-        
+
         # Exponential moving averages
         ema_short = work["close"].ewm(span=9, adjust=False).mean()
         ema_long = work["close"].ewm(span=21, adjust=False).mean()
         work["ema_spread"] = ema_short - ema_long
-        
+
         # Momentum calculations
         work["momentum_score"] = work["close"].diff(periods=5).fillna(0.0)
         work["trend_strength"] = (work["close"] - work["close"].rolling(window=14).mean()).fillna(0.0)
-        
+
         # Volatility metric sets
         rolling_std = work["close"].rolling(window=10).std().fillna(0.0)
         work["volatility_score"] = rolling_std
         high_low_range = work["high"].rolling(window=14).max() - work["low"].rolling(window=14).min()
         work["compression_score"] = (rolling_std / (high_low_range + 0.0001)).fillna(0.0)
-        
+
         # Velocity metrics
         work["momentum_persistence"] = work["momentum_score"].rolling(window=3).mean().fillna(0.0)
         work["higher_low_strength"] = (work["low"] - work["low"].shift(1)).fillna(0.0)
         work["price_position"] = ((work["close"] - work["low"]) / ((work["high"] - work["low"]) + 0.0001))
-        
+
         # Average True Range (ATR)
-        tr = np.maximum(work["high"] - work["low"], 
-                        np.maximum(abs(work["high"] - work["close"].shift(1)), 
+        tr = np.maximum(work["high"] - work["low"],
+                        np.maximum(abs(work["high"] - work["close"].shift(1)),
                                    abs(work["low"] - work["close"].shift(1)))).fillna(0.0)
         work["ATR"] = tr.rolling(window=14).mean().fillna(0.1)
 
@@ -148,18 +149,18 @@ class LiveDataIngestor:
         for feature in ["momentum_score", "trend_strength", "ema_spread", "price_position"]:
             work[f"delta_{feature}_1"] = work[feature].diff(periods=1).fillna(0.0)
             work[f"delta_{feature}_3"] = work[feature].diff(periods=3).fillna(0.0)
-            
+
         return work
 
     def run_pipeline(self):
         """Processes rolling FIFO layers across your active NIFTY500 symbols list."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
         symbols = self.load_universe()
-        
+
         if not symbols:
             self.logger.error("No valid trading assets located. Ingestion process terminated.")
             return
-            
+
         try:
             jwt_token = self.generate_jwt_session()
         except Exception:
@@ -168,24 +169,24 @@ class LiveDataIngestor:
 
         self.logger.info(f"Syncing FIFO layers for {len(symbols)} stocks inside {self.output_dir.relative_to(self.base_dir)}...")
         success_count = 0
-        
+
         for idx, sym in enumerate(symbols, start=1):
             try:
                 sym_clean = sym.strip()
                 parquet_target = self.output_dir / f"{sym_clean}.parquet"
-                
+
                 # Check for historical data to distinguish cold starts from live updates
                 if parquet_target.exists():
                     existing_df = pd.read_parquet(parquet_target)
-                    
+
                     # Fetch single newest 2-hour processing slice
                     new_candle_df = self.fetch_candles(sym_clean, jwt_token, fetch_count=1)
                     if new_candle_df.empty:
                         continue
-                        
+
                     raw_columns = ["timestamp", "open", "high", "low", "close", "volume"]
                     cleaned_hist = existing_df[raw_columns]
-                    
+
                     # Append new candle and apply FIFO slice to drop the oldest record
                     merged_raw_df = pd.concat([cleaned_hist, new_candle_df], ignore_index=True)
                     final_raw_df = merged_raw_df.tail(self.max_history_window)
@@ -202,11 +203,12 @@ class LiveDataIngestor:
                 processed_df = self.compute_technical_indicators(final_raw_df)
                 processed_df.to_parquet(parquet_target, index=False)
                 success_count += 1
-                
+
             except Exception as e:
-                self.logger.warning(f"Failed processing execution buffers for asset {sym}: {e}")
-                
+                self.warning(f"Failed processing execution buffers for asset {sym}: {e}")
+
         self.logger.info(f"=== FIFO UPDATE MATRIX SUCCESSFUL: Maintained {success_count}/{len(symbols)} stock logs ===")
+
 
 if __name__ == "__main__":
     ingestor = LiveDataIngestor()
