@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -8,6 +10,15 @@ import pandas as pd
 from paper_trading.common import TradingConfig
 from paper_trading.logging_config import get_system_logger
 from paper_trading.state_manager import StateManager
+
+# Safe initialization block for Supabase Cloud Sync
+try:
+    from supabase import create_client, Client
+    SUPABASE_URL = os.environ.get("VITE_SUPABASE_URL", "")
+    SUPABASE_KEY = os.environ.get("VITE_SUPABASE_ANON_KEY", "")
+    supabase_client: Client | None = create_client(SUPABASE_URL, SUPABASE_KEY) if (SUPABASE_URL and SUPABASE_KEY) else None
+except ImportError:
+    supabase_client = None
 
 
 @dataclass
@@ -45,11 +56,77 @@ class PortfolioEngine:
         free.sort(key=lambda x: x[1], reverse=True)
         return free
 
+    def _sync_to_supabase(self, portfolio: pd.DataFrame) -> None:
+        """
+        Cloud sync worker that ensures all active positions are fully updated 
+        in Supabase so the React dashboard renders them accurately.
+        """
+        if not supabase_client:
+            return
+
+        try:
+            if portfolio.empty:
+                return
+
+            records_to_sync = []
+            for _, row in portfolio.iterrows():
+                ts = row["entry_timestamp"]
+                ts_iso = ts.isoformat() if isinstance(ts, datetime) else str(ts)
+
+                records_to_sync.append({
+                    "symbol": str(row["symbol"]),
+                    "entry_timestamp": ts_iso,
+                    "entry_price": float(row["entry_price"]),
+                    "quantity": int(row["quantity"]),
+                    "slot_id": int(row["slot_id"]),
+                    "slot_capital": float(row["slot_capital"]),
+                    "pqs": float(row["pqs"]),
+                    "status": str(row["status"]),
+                    "current_price": float(row.get("current_price", row["entry_price"])),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
+
+            if records_to_sync:
+                supabase_client.table("open_positions").upsert(records_to_sync, on_conflict="symbol").execute()
+                self.logger.info("Successfully synchronized %d positions to Supabase cloud table.", len(records_to_sync))
+        except Exception as err:
+            self.logger.error("Supabase open_positions table sync encountered an interception failure: %s", err)
+
     def update_from_candidates(self, candidates: pd.DataFrame | None = None) -> pd.DataFrame:
+        # CHANGED: Pull directly from Supabase pqs_rankings table if no explicit candidates are provided
         if candidates is None:
-            candidates = pd.read_csv(self.config.candidates_file)
+            if supabase_client:
+                try:
+                    self.logger.info("Fetching top PQS candidates directly from Supabase cloud...")
+                    # Fetching top 20 candidates sorted by rank to make sure we have choices 
+                    # if some top options are already owned or have an invalid price.
+                    response = supabase_client.table("pqs_rankings")\
+                        .select("symbol, pqs, rank, last_price, timestamp")\
+                        .order("rank", ascending=True)\
+                        .limit(20)\
+                        .execute()
+                    
+                    if response.data:
+                        candidates = pd.DataFrame(response.data)
+                        self.logger.info("Successfully loaded %d candidates from database.", len(candidates))
+                    else:
+                        candidates = pd.DataFrame()
+                except Exception as db_err:
+                    self.logger.error("Failed to query Supabase pqs_rankings, falling back to local CSV: %s", db_err)
+                    candidates = pd.DataFrame()
+
+            # Local CSV fallback strategy if cloud fetch returns nothing or fails
+            if candidates is None or candidates.empty:
+                if self.config.candidates_file.exists():
+                    candidates = pd.read_csv(self.config.candidates_file)
+                else:
+                    candidates = pd.DataFrame()
+
         if not candidates.empty and "timestamp" in candidates.columns:
             candidates["timestamp"] = pd.to_datetime(candidates["timestamp"], errors="coerce")
+        else:
+            # Inject current time fallback if database or file row is missing a timestamp column
+            candidates["timestamp"] = datetime.now(timezone.utc)
 
         portfolio = self._load_existing()
         if portfolio.empty:
@@ -68,28 +145,40 @@ class PortfolioEngine:
 
         open_positions = portfolio[portfolio["status"] == "OPEN"].copy()
         free_slots = self._free_slots(open_positions)
+        
+        # If there are no candidates or no slots available, save current state and return
         if candidates.empty or not free_slots:
             self.state_manager.save_portfolio(portfolio)
-            self.logger.info("Portfolio update saved rows=%s open_positions=%s", len(portfolio), len(open_positions))
+            self._sync_to_supabase(portfolio)
+            self.logger.info("Portfolio update saved rows=%s open_positions=%s (No candidates or free slots)", len(portfolio), len(open_positions))
             return portfolio
 
         open_symbols = set(open_positions["symbol"].tolist())
+        
+        # Sort explicitly by PQS descending (highest rank priority first)
         ranked = candidates.sort_values("pqs", ascending=False)
 
         for _, row in ranked.iterrows():
             if not free_slots:
                 break
+                
             symbol = str(row["symbol"])
+            # Skip if we already hold an active position in this ticker asset
             if symbol in open_symbols:
                 continue
 
-            slot_id, slot_cap = free_slots.pop(0)
+            # Check if candidate has a valid current trading price field
             price = float(row.get("last_price", 0.0))
             if price <= 0:
                 continue
+                
+            slot_id, slot_cap = free_slots.pop(0)
             qty = int(slot_cap // price)
             if qty <= 0:
+                # Put the slot capital back since we didn't fill it
+                free_slots.insert(0, (slot_id, slot_cap))
                 continue
+                
             entry = {
                 "symbol": symbol,
                 "entry_timestamp": row["timestamp"],
@@ -103,10 +192,13 @@ class PortfolioEngine:
             portfolio = pd.concat([portfolio, pd.DataFrame([entry])], ignore_index=True)
             open_symbols.add(symbol)
 
+            # Enforce maximum active position boundary checks
             if len(portfolio[portfolio["status"] == "OPEN"]) >= self.trading_config.max_positions:
                 break
 
         self.state_manager.save_portfolio(portfolio)
+        self._sync_to_supabase(portfolio)
+        
         self.logger.info(
             "Portfolio update saved rows=%s open_positions=%s",
             len(portfolio),
@@ -118,10 +210,8 @@ class PortfolioEngine:
 def main() -> None:
     engine = PortfolioEngine()
     out = engine.update_from_candidates()
-    print(f"Portfolio rows: {len(out)}")
-    print("Saved: current_portfolio.csv")
+    print(f"Portfolio rows calculated: {len(out)}")
 
 
 if __name__ == "__main__":
     main()
-
