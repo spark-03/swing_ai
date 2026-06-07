@@ -1,8 +1,8 @@
 import logging
 import logging.handlers
-import sys
 import os
 from pathlib import Path
+import sys
 
 _LOG_DIR = Path("logs")
 _LOG_FORMAT = '[%(asctime)s] %(levelname)s [%(name)s]: %(message)s'
