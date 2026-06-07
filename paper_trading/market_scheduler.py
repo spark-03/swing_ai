@@ -33,7 +33,14 @@ def run_trading_pipeline(slot_name: str):
     
     # 1. Step One: Trigger Data Ingestion to fetch fresh broker candles
     logger.info("Executing data ingestion routines...")
-    ingest_proc = subprocess.run([sys.executable, "-m", "paper_trading.data_ingestion"], capture_output=True, text=True)
+    try:
+        ingest_proc = subprocess.run(
+            [sys.executable, "-m", "paper_trading.data_ingestion"], 
+            capture_output=True, text=True, timeout=600  # 10 min timeout
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("Data Ingestion timed out after 600 seconds! Skipping this cycle.")
+        return
     
     if ingest_proc.returncode != 0:
         logger.error("Data Ingestion crashed! Skipping execution portfolio logic. Error:\n%s", ingest_proc.stderr)
@@ -42,9 +49,13 @@ def run_trading_pipeline(slot_name: str):
 
     # 2. Step Two: Trigger Portfolio Core Engine to process DQN Exits & PQS Entries
     logger.info("Executing portfolio matrix engine allocation processes...")
-    portfolio_proc = subprocess.run([
-        sys.executable, "-m", "paper_trading.run_live_portfolio", "--slot", slot_name
-    ], capture_output=True, text=True)
+    try:
+        portfolio_proc = subprocess.run([
+            sys.executable, "-m", "paper_trading.run_live_portfolio", "--slot", slot_name
+        ], capture_output=True, text=True, timeout=300)  # 5 min timeout
+    except subprocess.TimeoutExpired:
+        logger.error("Portfolio Engine timed out after 300 seconds!")
+        return
     
     if portfolio_proc.returncode != 0:
         logger.error("Portfolio Engine crashed! Error Log output:\n%s", portfolio_proc.stderr)

@@ -9,6 +9,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+venv/
+.venv/
 
 # Environment variables
 .env
@@ -24,6 +26,24 @@ build/
 # Build outputs
 dashboard/dist/
 *.log
+
+# Logs directory
+logs/
+
+# Data files (parquet, CSV generated at runtime)
+data/
+*.parquet
+current_portfolio.csv
+current_portfolio_backup.csv
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
 
 # OS
 .DS_Store
