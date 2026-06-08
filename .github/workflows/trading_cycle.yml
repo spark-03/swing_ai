@@ -33,6 +33,9 @@ jobs:
       PYTHONPATH: "."
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_KEY }}
+      ENABLE_ROTATION: "false"
       ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
       ANGEL_CLIENT_ID: ${{ secrets.ANGEL_CLIENT_ID }}
       ANGEL_PASSWORD: ${{ secrets.ANGEL_PASSWORD }}
@@ -100,6 +103,10 @@ validate_all()
         run: |
           python -m paper_trading.market_scheduler --once --allow-late-minutes 30
 
+      - name: Execute Live Trading Cycle Engine
+        run: |
+          python -m paper_trading.run_live_portfolio --slot CRON
+
       - name: Save Trading State Cache
         if: always()
         uses: actions/cache/save@v4
@@ -130,7 +137,6 @@ validate_all()
         if: failure()
         run: |
           echo "Trading cycle failed. Check logs for details."
-          # Could add Slack/Discord notification here
 
       - name: Trigger Render Deploy (if portfolio changed)
         if: success() && github.event_name != 'pull_request'
