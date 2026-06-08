@@ -5,6 +5,7 @@ Handles RL exits, PQS candidate entries, and portfolio persistence.
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -19,22 +20,26 @@ from paper_trading.state_manager import PORTFOLIO_COLUMNS, StateManager
 from paper_trading.supabase_logger import SupabaseLogger
 
 try:
-    from paper_trading.rl_exit_engine import RLExitEngine
-except Exception:  # pragma: no cover - protects cloud startup if torch is unavailable
-    class RLExitEngine:  # type: ignore[no-redef]
-        def evaluate_positions(self, open_positions: pd.DataFrame) -> pd.DataFrame:
-            return pd.DataFrame(
-                [
-                    {
-                        "timestamp": pd.Timestamp.now("UTC"),
-                        "symbol": str(row["symbol"]),
-                        "decision": "HOLD",
-                        "reason": "rl_dependency_unavailable",
-                    }
-                    for _, row in open_positions.iterrows()
-                ],
-                columns=["timestamp", "symbol", "decision", "reason"],
-            )
+    # Pointing to updated module naming convention
+    from paper_trading.rl_exit import RLExitEngine
+except ImportError:
+    try:
+        from paper_trading.rl_exit_engine import RLExitEngine
+    except Exception:  # pragma: no cover - protects cloud startup if torch/dependencies are missing
+        class RLExitEngine:  # type: ignore[no-redef]
+            def evaluate_positions(self, open_positions: pd.DataFrame) -> pd.DataFrame:
+                return pd.DataFrame(
+                    [
+                        {
+                            "timestamp": pd.Timestamp.now("UTC").isoformat(),
+                            "symbol": str(row["symbol"]),
+                            "decision": "HOLD",
+                            "reason": "rl_dependency_unavailable",
+                        }
+                        for _, row in open_positions.iterrows()
+                    ],
+                    columns=["timestamp", "symbol", "decision", "reason"],
+                )
 
 
 def apply_rl_exits(portfolio_df: pd.DataFrame, decisions_df: pd.DataFrame) -> pd.DataFrame:
@@ -48,6 +53,7 @@ def apply_rl_exits(portfolio_df: pd.DataFrame, decisions_df: pd.DataFrame) -> pd
 
     portfolio_df.loc[mask, "status"] = "CLOSED_RL"
     portfolio_df.loc[mask, "close_reason"] = "rl_exit"
+    portfolio_df.loc[mask, "exit_timestamp"] = pd.Timestamp.utcnow()
     return portfolio_df
 
 
@@ -70,13 +76,16 @@ def main() -> None:
     parser.add_argument("--slot", default="CYCLE", help="Cycle identifier.")
     args = parser.parse_args()
 
+    start_time = time.time()
     logger = get_system_logger("paper_trading.live_cycle")
     state_manager = StateManager()
+    
+    # 1. Start the run heartbeat log
     record_cycle_start()
     logger.info("Cycle start slot=%s dry_run=%s", args.slot, args.dry_run)
 
     try:
-        # Step 1: Generate candidates via PQS ranking
+        # Step 1: Generate candidates via PQS ranking matrix
         candidate_engine = LiveCandidateEngine()
         candidates = candidate_engine.generate_candidates()
 
@@ -84,7 +93,7 @@ def main() -> None:
             logger.warning("No candidates generated. Skipping cycle.")
             return
 
-        # Step 2: Upload top 100 PQS rankings to Supabase
+        # Step 2: Upload top 100 PQS rankings to Supabase for the frontend layout table
         if not args.dry_run:
             try:
                 supabase_logger = SupabaseLogger()
@@ -102,24 +111,24 @@ def main() -> None:
             except Exception as e:
                 logger.warning("Failed to upload PQS rankings to Supabase: %s", e)
 
-        # Step 3: Update portfolio from candidates
+        # Step 3: Update portfolio matrix entries using active slots
         portfolio_engine = PortfolioEngine()
         portfolio = portfolio_engine.update_from_candidates(candidates)
         open_positions = portfolio[portfolio["status"] == "OPEN"].copy() if not portfolio.empty else pd.DataFrame()
 
-        # Step 4: Apply RL exits
+        # Step 4: Evaluate DQN neural network configurations for active holding exits
         rl_engine = RLExitEngine()
         exit_decisions = rl_engine.evaluate_positions(open_positions)
         portfolio = apply_rl_exits(portfolio, exit_decisions)
 
-        # Step 5: Apply rotation strategy
+        # Step 5: Check asset swaps (safely bypassed via Option 2 environment variable check)
         rotation_engine = RotationEngine()
         portfolio, rotation_log = rotation_engine.evaluate_and_rotate(portfolio, candidates)
 
-        # Step 6: Save portfolio
+        # Step 6: Core save update loop to local CSV backup file
         state_manager.save_portfolio(portfolio)
 
-        # Step 7: Push open positions to Supabase
+        # Step 7: Push active positions data streams to Supabase backend endpoints
         if not args.dry_run:
             try:
                 supabase_logger = SupabaseLogger()
@@ -155,9 +164,11 @@ def main() -> None:
                         "unrealized_pnl": unrealized_pnl,
                         "unrealized_pnl_pct": (unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0,
                     })
-                supabase_logger.log_open_positions(open_positions_rows)
+                
+                if open_positions_rows:
+                    supabase_logger.log_open_positions(open_positions_rows)
 
-                # Step 8: Push snapshot & trades
+                # Step 8: Calculate core portfolio valuation snapshot entries
                 snapshot = build_snapshot(portfolio)
                 supabase_logger.log_portfolio_snapshots([snapshot])
 
@@ -165,29 +176,31 @@ def main() -> None:
                     logger.info("Rotations triggered: %d", len(rotation_log))
 
             except Exception as e:
-                logger.warning("Supabase push failed: %s", e)
+                logger.warning("Supabase sync pipeline encountered data transfer dropped: %s", e)
 
-        # Step 9: Update metrics
-        trades_executed = len(exit_decisions)
+        # Step 9: Finalize 2-hour performance telemetry updates
+        cycle_duration = round(time.time() - start_time, 3)
+        trades_executed = len(exit_decisions) if not exit_decisions.empty else 0
         exits_triggered = int((exit_decisions["decision"] == "SELL").sum()) if not exit_decisions.empty else 0
         rotations_triggered = len(rotation_log) if not rotation_log.empty else 0
+        
         update_cycle_metrics(
             portfolio=portfolio,
             trades_executed=trades_executed,
             exits_triggered=exits_triggered,
             rotations_triggered=rotations_triggered,
-            cycle_duration_seconds=0,
+            cycle_duration_seconds=cycle_duration,
             last_processed_slot=args.slot,
         )
 
         logger.info(
-            "Cycle complete slot=%s candidates=%s exits=%s rotations=%s",
-            args.slot, len(candidates), exits_triggered, rotations_triggered,
+            "Cycle complete slot=%s candidates=%s exits=%s rotations=%s duration=%ss",
+            args.slot, len(candidates), exits_triggered, rotations_triggered, cycle_duration,
         )
 
     except Exception as exc:
         record_cycle_error(str(exc))
-        logger.exception("Cycle failed slot=%s", args.slot)
+        logger.exception("Cycle failed execution slot=%s", args.slot)
         raise
 
 
