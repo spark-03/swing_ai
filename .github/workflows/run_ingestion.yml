@@ -1,0 +1,47 @@
+name: Manual Data Ingestion Trigger
+
+on:
+  workflow_dispatch: # Allows you to press a button on GitHub to start it manually
+
+permissions:
+  contents: write # Allows the runner to save the data files back to your repo
+
+jobs:
+  ingest_data:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' # Bypasses the 3.14 compilation bugs entirely
+
+    - name: Install System Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install numpy pandas pyarrow requests pyotp
+
+    - name: Execute Live Data Ingestor
+      run: |
+        python -m paper_trading.data_ingestion
+      env:
+        ANGEL_API_KEY: "MOCK_API_KEY" 
+        PYTHONPATH: .
+# Keeps it in high-fidelity simulation mode to seed files
+
+    - name: Commit and Push Parquet Candle Data
+      run: |
+        git config --global user.name "GitHub Actions Bot"
+        git config --global user.email "actions@github.com"
+        git add -f data/2h/*.parquet
+        
+        # Only commit if new data files were generated to prevent pipeline errors
+        if git diff --staged --quiet; then
+          echo "No changes to commit."
+        else
+          git commit -m "Automated Sync: Seeded 60 rolling historical candle arrays [skip ci]"
+          git push
+        fi

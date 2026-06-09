@@ -1,0 +1,88 @@
+name: Validate Changes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pyyaml
+
+      - name: Install Node Dependencies
+        run: |
+          cd dashboard
+          npm install
+
+      - name: Validate Python Syntax
+        run: |
+          python -m compileall paper_trading
+
+      - name: Build Frontend
+        working-directory: dashboard
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Validate Render Config
+        run: |
+          if [ -f render.yaml ]; then
+            echo "✅ render.yaml exists"
+            python -c "import yaml; yaml.safe_load(open('render.yaml'))" && echo "✅ render.yaml is valid YAML"
+          else
+            echo "❌ render.yaml missing"
+            exit 1
+          fi
+
+      - name: Validate Netlify Config
+        run: |
+          if [ -f netlify.toml ]; then
+            echo "✅ netlify.toml exists"
+          else
+            echo "❌ netlify.toml missing"
+            exit 1
+          fi
+
+      - name: Validate PyProject Config
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "✅ pyproject.toml exists"
+            python -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))" && echo "✅ pyproject.toml is valid TOML"
+          else
+            echo "❌ pyproject.toml missing"
+            exit 1
+          fi
+
+      - name: Run Quick Tests
+        run: |
+          python -c "from paper_trading.market_scheduler import run_trading_pipeline; from paper_trading.live_candidate_engine import LiveCandidateEngine; print('runtime imports ok')"
+        env:
+          PYTHONPATH: .

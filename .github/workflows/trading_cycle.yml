@@ -1,0 +1,146 @@
+name: Trading Cycle
+
+on:
+  schedule:
+    # Runs at 9:15 AM, 11:15 AM, 1:15 PM, 3:15 PM IST (Mon-Fri)
+    - cron: "45 3 * * 1-5"
+    - cron: "45 5 * * 1-5"
+    - cron: "45 7 * * 1-5"
+    - cron: "45 9 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force run even if markets might be closed'
+        required: false
+        default: 'false'
+        type: boolean
+
+concurrency:
+  group: trading-cycle
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  run-trading-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "."
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_KEY }}
+      ENABLE_ROTATION: "false"
+      ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+      ANGEL_CLIENT_ID: ${{ secrets.ANGEL_CLIENT_ID }}
+      ANGEL_PASSWORD: ${{ secrets.ANGEL_PASSWORD }}
+      ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Restore Trading State Cache
+        uses: actions/cache/restore@v4
+        id: restore-state
+        with:
+          path: |
+            current_portfolio.csv
+            logs/last_processed_slot.txt
+            logs/dashboard_metrics.json
+            logs/state_backups
+            data/2h
+          key: trading-state-${{ github.run_id }}
+          restore-keys: |
+            trading-state-
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install supabase prometheus-client
+
+      - name: Compile Check
+        run: |
+          python -m compileall paper_trading
+
+      - name: Health Check
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from paper_trading.health_check import check_all
+          check_all()
+          "
+
+      - name: Incremental 2H Data Update
+        run: |
+          python -m paper_trading.data_ingestion
+
+      - name: Validate 2H Data
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from paper_trading.data_validator import validate_all
+          validate_all()
+          "
+
+      - name: Run Trading Scheduler
+        run: |
+          python -m paper_trading.market_scheduler --once --allow-late-minutes 30
+
+      - name: Execute Live Trading Cycle Engine
+        run: |
+          python -m paper_trading.run_live_portfolio --slot CRON
+
+      - name: Save Trading State Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            current_portfolio.csv
+            logs/last_processed_slot.txt
+            logs/dashboard_metrics.json
+            logs/state_backups
+            data/2h
+          key: trading-state-${{ github.run_id }}
+
+      - name: Upload Trading Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-cycle-logs-${{ github.run_id }}
+          path: |
+            logs/system.log
+            logs/data_update_log.csv
+            logs/data_validation_report.csv
+            logs/data_validation_report.json
+            logs/dashboard_metrics.json
+            logs/last_processed_slot.txt
+          retention-days: 30
+
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo "Trading cycle failed. Check logs for details."
+
+      - name: Trigger Render Deploy (if portfolio changed)
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          if [ -f "current_portfolio.csv" ]; then
+            echo "Portfolio updated, could trigger Render deploy here"
+          fi

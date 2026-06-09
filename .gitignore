@@ -1,0 +1,53 @@
+# Model files (too large to commit)
+models/
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build outputs
+dashboard/dist/
+*.log
+
+# Logs directory
+logs/
+
+# Data files (parquet, CSV generated at runtime)
+data/
+*.parquet
+current_portfolio.csv
+current_portfolio_backup.csv
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumb.db
+
+# Git LFS
+.git/lfs/

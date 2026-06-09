@@ -1,1 +1,9 @@
-# swing_ai
+# Swing AI Trading System
+
+AI-powered swing trading system with PQS ranking, RL exits, and Supabase persistence.
+
+## Deployment
+- Frontend: Netlify
+- Backend: Render
+- CI/CD: GitHub Actions
+
