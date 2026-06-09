@@ -80,10 +80,10 @@ jobs:
       - name: Health Check
         run: |
           python -c "
-import sys
-sys.path.insert(0, '.')
-from paper_trading.health_check import check_all
-check_all()
+          import sys
+          sys.path.insert(0, '.')
+          from paper_trading.health_check import check_all
+          check_all()
           "
 
       - name: Incremental 2H Data Update
@@ -93,10 +93,10 @@ check_all()
       - name: Validate 2H Data
         run: |
           python -c "
-import sys
-sys.path.insert(0, '.')
-from paper_trading.data_validator import validate_all
-validate_all()
+          import sys
+          sys.path.insert(0, '.')
+          from paper_trading.data_validator import validate_all
+          validate_all()
           "
 
       - name: Run Trading Scheduler
@@ -143,5 +143,4 @@ validate_all()
         run: |
           if [ -f "current_portfolio.csv" ]; then
             echo "Portfolio updated, could trigger Render deploy here"
-            # curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }} || true
           fi
