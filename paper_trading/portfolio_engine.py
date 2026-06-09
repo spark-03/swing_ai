@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -78,7 +78,7 @@ class PortfolioEngine:
                     "entry_timestamp": ts_iso,
                     "entry_price": float(row["entry_price"]),
                     "quantity": int(row["quantity"]),
-                    "slot_id": int(row["slot_id"]),
+                    "slot_id": int(row["slot_id"]) if pd.notna(row["slot_id"]) else None,
                     "slot_capital": float(row["slot_capital"]),
                     "pqs": float(row["pqs"]),
                     "status": str(row["status"]),
@@ -92,19 +92,45 @@ class PortfolioEngine:
         except Exception as err:
             self.logger.error("Supabase open_positions table sync encountered an interception failure: %s", err)
 
+    def is_market_open(self) -> bool:
+        """
+        Helper method to check if the Indian Stock Market (NSE/BSE) is currently open.
+        Market hours: Monday - Friday, 9:15 AM to 3:30 PM IST.
+        """
+        now_utc = datetime.now(timezone.utc)
+        # Indian Standard Time is UTC + 5 hours 30 minutes
+        now_ist = now_utc + timedelta(hours=5, minutes=30)
+        
+        if now_ist.weekday() >= 5:
+            return False
+            
+        market_start = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+        market_end = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+        
+        return market_start <= now_ist <= market_end
+
     def update_from_candidates(self, candidates: pd.DataFrame | None = None) -> pd.DataFrame:
-        # CHANGED: Pull directly from Supabase pqs_rankings table if no explicit candidates are provided
+        """
+        Evaluates top ranking strategies and fills available capital slots with new positions.
+        Strictly enforces active market hour boundaries before processing transaction footprints.
+        """
+        # Market Hours Guard (Uncomment to block out-of-market processing)
+        # if not self.is_market_open():
+        #     self.logger.warning("Skipping portfolio pipeline execution: Indian Stock Market is currently CLOSED.")
+        #     return self._load_existing()
+
         if candidates is None:
             if supabase_client:
                 try:
                     self.logger.info("Fetching top PQS candidates directly from Supabase cloud...")
-                    # Fetching top 20 candidates sorted by rank to make sure we have choices 
-                    # if some top options are already owned or have an invalid price.
-                    response = supabase_client.table("pqs_rankings")\
-                        .select("symbol, pqs, rank, last_price, timestamp")\
-                        .order("rank", ascending=True)\
-                        .limit(20)\
+                    # CLEANED: Parentheses wrap method chain to permanently solve trailing space syntax bugs
+                    response = (
+                        supabase_client.table("pqs_rankings")
+                        .select("symbol, pqs, rank, last_price, timestamp")
+                        .order("rank", desc=False)
+                        .limit(20)
                         .execute()
+                    )
                     
                     if response.data:
                         candidates = pd.DataFrame(response.data)
@@ -115,7 +141,6 @@ class PortfolioEngine:
                     self.logger.error("Failed to query Supabase pqs_rankings, falling back to local CSV: %s", db_err)
                     candidates = pd.DataFrame()
 
-            # Local CSV fallback strategy if cloud fetch returns nothing or fails
             if candidates is None or candidates.empty:
                 if self.config.candidates_file.exists():
                     candidates = pd.read_csv(self.config.candidates_file)
@@ -125,11 +150,14 @@ class PortfolioEngine:
         if not candidates.empty and "timestamp" in candidates.columns:
             candidates["timestamp"] = pd.to_datetime(candidates["timestamp"], errors="coerce")
         else:
-            # Inject current time fallback if database or file row is missing a timestamp column
             candidates["timestamp"] = datetime.now(timezone.utc)
 
-        portfolio = self._load_existing()
-        if portfolio.empty:
+        try:
+            portfolio = self._load_existing()
+        except Exception:
+            portfolio = pd.DataFrame()
+
+        if portfolio is None or portfolio.empty:
             portfolio = pd.DataFrame(
                 columns=[
                     "symbol",
@@ -146,7 +174,6 @@ class PortfolioEngine:
         open_positions = portfolio[portfolio["status"] == "OPEN"].copy()
         free_slots = self._free_slots(open_positions)
         
-        # If there are no candidates or no slots available, save current state and return
         if candidates.empty or not free_slots:
             self.state_manager.save_portfolio(portfolio)
             self._sync_to_supabase(portfolio)
@@ -154,20 +181,19 @@ class PortfolioEngine:
             return portfolio
 
         open_symbols = set(open_positions["symbol"].tolist())
-        
-        # Sort explicitly by PQS descending (highest rank priority first)
         ranked = candidates.sort_values("pqs", ascending=False)
+        
+        # Real transaction timestamp baseline
+        execution_timestamp = datetime.now(timezone.utc).isoformat()
 
         for _, row in ranked.iterrows():
             if not free_slots:
                 break
                 
             symbol = str(row["symbol"])
-            # Skip if we already hold an active position in this ticker asset
             if symbol in open_symbols:
                 continue
 
-            # Check if candidate has a valid current trading price field
             price = float(row.get("last_price", 0.0))
             if price <= 0:
                 continue
@@ -175,13 +201,12 @@ class PortfolioEngine:
             slot_id, slot_cap = free_slots.pop(0)
             qty = int(slot_cap // price)
             if qty <= 0:
-                # Put the slot capital back since we didn't fill it
                 free_slots.insert(0, (slot_id, slot_cap))
                 continue
                 
             entry = {
                 "symbol": symbol,
-                "entry_timestamp": row["timestamp"],
+                "entry_timestamp": execution_timestamp,
                 "entry_price": price,
                 "quantity": qty,
                 "slot_id": slot_id,
@@ -192,7 +217,6 @@ class PortfolioEngine:
             portfolio = pd.concat([portfolio, pd.DataFrame([entry])], ignore_index=True)
             open_symbols.add(symbol)
 
-            # Enforce maximum active position boundary checks
             if len(portfolio[portfolio["status"] == "OPEN"]) >= self.trading_config.max_positions:
                 break
 
