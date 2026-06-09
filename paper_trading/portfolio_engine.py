@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
+from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pandas as pd
@@ -98,7 +100,6 @@ class PortfolioEngine:
         Market hours: Monday - Friday, 9:15 AM to 3:30 PM IST.
         """
         now_utc = datetime.now(timezone.utc)
-        # Indian Standard Time is UTC + 5 hours 30 minutes
         now_ist = now_utc + timedelta(hours=5, minutes=30)
         
         if now_ist.weekday() >= 5:
@@ -112,18 +113,11 @@ class PortfolioEngine:
     def update_from_candidates(self, candidates: pd.DataFrame | None = None) -> pd.DataFrame:
         """
         Evaluates top ranking strategies and fills available capital slots with new positions.
-        Strictly enforces active market hour boundaries before processing transaction footprints.
         """
-        # Market Hours Guard (Uncomment to block out-of-market processing)
-        # if not self.is_market_open():
-        #     self.logger.warning("Skipping portfolio pipeline execution: Indian Stock Market is currently CLOSED.")
-        #     return self._load_existing()
-
         if candidates is None:
             if supabase_client:
                 try:
                     self.logger.info("Fetching top PQS candidates directly from Supabase cloud...")
-                    # CLEANED: Parentheses wrap method chain to permanently solve trailing space syntax bugs
                     response = (
                         supabase_client.table("pqs_rankings")
                         .select("symbol, pqs, rank, last_price, timestamp")
@@ -159,16 +153,7 @@ class PortfolioEngine:
 
         if portfolio is None or portfolio.empty:
             portfolio = pd.DataFrame(
-                columns=[
-                    "symbol",
-                    "entry_timestamp",
-                    "entry_price",
-                    "quantity",
-                    "slot_id",
-                    "slot_capital",
-                    "pqs",
-                    "status",
-                ]
+                columns=["symbol", "entry_timestamp", "entry_price", "quantity", "slot_id", "slot_capital", "pqs", "status"]
             )
 
         open_positions = portfolio[portfolio["status"] == "OPEN"].copy()
@@ -182,8 +167,6 @@ class PortfolioEngine:
 
         open_symbols = set(open_positions["symbol"].tolist())
         ranked = candidates.sort_values("pqs", ascending=False)
-        
-        # Real transaction timestamp baseline
         execution_timestamp = datetime.now(timezone.utc).isoformat()
 
         for _, row in ranked.iterrows():
@@ -231,10 +214,35 @@ class PortfolioEngine:
         return portfolio
 
 
+def run_dummy_web_server():
+    """
+    Spins up a lightweight server loop to trick Render's free tier port scanner.
+    """
+    port = int(os.environ.get("PORT", 10000))
+    server_address = ("0.0.0.0", port)
+    
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass  # Keeps logs completely clean from health-check pings
+            
+    httpd = HTTPServer(server_address, QuietHandler)
+    print(f"[Free Tier Guard]: Web server listening on port {port}...")
+    httpd.serve_forever()
+
+
 def main() -> None:
+    # 1. Start the dummy server in the background so Render's port scan passes instantly
+    server_thread = threading.Thread(target=run_dummy_web_server, daemon=True)
+    server_thread.start()
+
+    # 2. Execute your core calculations
     engine = PortfolioEngine()
     out = engine.update_from_candidates()
     print(f"Portfolio rows calculated: {len(out)}")
+
+    # 3. Keep the main script execution alive so Render doesn't shut down the free instance
+    print("[Free Tier Guard]: Keeping application process alive.")
+    threading.Event().wait()
 
 
 if __name__ == "__main__":
