@@ -48,7 +48,7 @@ jobs:
           fetch-depth: 1
 
       - name: Restore Trading State Cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         id: restore-state
         with:
           path: |
@@ -109,7 +109,7 @@ jobs:
 
       - name: Save Trading State Cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             current_portfolio.csv
